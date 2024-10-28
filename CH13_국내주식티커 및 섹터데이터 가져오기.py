@@ -1,17 +1,30 @@
 import requests as rq
 from bs4 import BeautifulSoup
-
-url = 'https://finance.naver.com/sise/sise_deposit.naver'
-data = rq.get(url)
-data_html = BeautifulSoup(data.content)
-
-parse_day = data_html.select_one(
-    'div.subtop_sise_graph2 > ul.subtop_chart_note > li > span.tah').text
-
 import re
 
-biz_day = re.findall('[0-9]+', parse_day)
-biz_day = ''.join(biz_day)
+url = 'https://finance.naver.com/sise/sise_deposit.naver'
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' \
+                  'AppleWebKit/537.36 (KHTML, like Gecko) ' \
+                  'Chrome/58.0.3029.110 Safari/537.3'}
+
+try:
+    response = rq.get(url, headers=headers)
+    response.raise_for_status()  # 잘못된 응답에 대해 HTTPError를 발생시킵니다
+    data_html = BeautifulSoup(response.content, 'html.parser')
+    element = data_html.select_one(
+        'div.subtop_sise_graph2 > ul.subtop_chart_note > li > span.tah')
+    
+    if element:
+        parse_day = element.text
+        biz_day = ''.join(re.findall('[0-9]+', parse_day))
+        print(f"영업일: {biz_day}")
+    else:
+        print("지정된 요소를 HTML에서 찾을 수 없습니다.")
+except rq.exceptions.RequestException as e:
+    print(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
+except Exception as e:
+    print(f"예상치 못한 오류가 발생했습니다: {e}")
 
 from io import BytesIO
 import pandas as pd
