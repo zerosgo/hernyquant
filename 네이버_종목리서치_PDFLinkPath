@@ -1,0 +1,49 @@
+import pandas as pd
+import pymysql
+from sqlalchemy import create_engine
+
+
+engine = create_engine('mysql+pymysql://root:7963@127.0.0.1:3306/stock_db')
+con = pymysql.connect(
+    user = 'root',
+    passwd = '7963',
+    host ='127.0.0.1',
+    db = 'stock_db',
+    charset = 'utf8'
+)
+
+mycursor = con.cursor()
+
+query = """
+    insert into researh_report_pdflink (날짜, 종목, 사유, 증권사, PDF링크)
+    values (%s, %s, %s, %s, %s) as new
+    on duplicate key update
+    사유 = new.사유, PDF링크 = new.PDF링크;
+"""
+
+# 파일 경로 지정
+file_path = r'D:\Non_Documents\(02) Coding\Python\ZeroS\Naver\research_report_pdf_file_path\cleaned_research_reports.csv'
+
+# CSV 파일을 읽기 (cp949 인코딩 사용, 기본 쉼표 구분자)
+try:
+    df = pd.read_csv(file_path, encoding='cp949')
+except pd.errors.ParserError:
+    # 오류 발생 시 탭 구분자로 시도
+    df = pd.read_csv(file_path, encoding='cp949', sep='\t')
+
+# "PDF링크" 열에서 날짜 부분 추출 후 "날짜" 열 생성
+df['날짜'] = df['PDF링크'].str.extract(r'(\d{8})')  # PDF 링크에서 8자리 날짜 추출
+df['날짜'] = pd.to_datetime(df['날짜'], format='%Y%m%d')  # 날짜 형식으로 변환
+
+# "날짜" 열을 첫 번째 열로 이동
+df = df[['날짜', '종목', '사유', '증권사', 'PDF링크']]
+
+args = df.values.tolist()
+mycursor.executemany(query, args)
+con.commit()
+
+# 정리된 DataFrame을 확인하거나 저장
+output_path = r'D:\Non_Documents\(02) Coding\Python\ZeroS\Naver\research_report_pdf_file_path\cleaned_research_reports.csv'
+df.to_csv(output_path, index=False, encoding='utf-8-sig')
+
+print(f"처리 완료! 결과 파일 경로: {output_path}")
