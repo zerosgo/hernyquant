@@ -1,0 +1,74 @@
+import pandas as pd
+import glob
+import os
+import pymysql
+from sqlalchemy import create_engine
+from datetime import date
+from dateutil.relativedelta import relativedelta
+import requests as rq
+import time
+from tqdm import tqdm
+from io import BytesIO
+
+engine = create_engine('mysql+pymysql://root:7963@127.0.0.1:3306/stock_db')
+con = pymysql.connect(
+    user = 'root',
+    passwd = '7963',
+    host ='127.0.0.1',
+    db = 'stock_db',
+    charset = 'utf8'
+)
+
+mycursor = con.cursor()
+
+query = """
+    insert into researh_report_page (날짜, 종목, 업체, 목표가, 페이지)
+    values (%s, %s, %s, %s, %s) as new
+    on duplicate key update
+    목표가 = new.목표가, 페이지 = new.페이지;
+"""
+
+error_list = []
+
+# 파일이 저장된 폴더 경로 지정
+folder_path = r'D:\Non_Documents\(02) Coding\Python\ZeroS\Naver\네이버_종목리서치_55000_74000'
+
+# 폴더 내 모든 CSV 파일 경로를 리스트로 수집
+file_paths = glob.glob(os.path.join(folder_path, '*.csv'))
+
+# 개별 파일 데이터프레임을 담을 리스트
+data_frames = []
+
+for file_path in file_paths:
+        
+    # CSV 파일 불러오기
+    df = pd.read_csv(file_path, encoding='utf-8')  # 한글 인코딩 설정
+
+    # 1. '날짜' 칼럼 파이프라인 제거 후 날짜 형식으로 변환
+    df['날짜'] = pd.to_datetime(df['날짜'].str.strip('|'), format='%Y.%m.%d', errors='coerce')
+    
+    # 2. '종목' 칼럼의 빈칸 제거
+    df['종목'] = df['종목'].str.replace(" ", "")
+    
+    # 3. '목표가격' 칼럼에서 '없음'인 행 제거 및 쉼표 제거 후 int 형으로 변환
+    df = df[df['목표가격'] != "없음"]  # '목표가격'이 '없음'이 아닌 행만 선택
+    df['목표가격'] = df['목표가격'].str.replace(",", "").astype(int)
+
+    # 클렌징한 데이터프레임을 리스트에 추가
+    data_frames.append(df)
+
+# 모든 파일을 병합하여 하나의 데이터프레임으로
+final_df = pd.concat(data_frames, ignore_index=True)
+
+args = final_df.values.tolist()
+mycursor.executemany(query, args)
+con.commit()
+
+# 결과를 새로운 CSV 파일로 저장
+output_path = os.path.join(folder_path, 'cleaned_combined_data.csv')
+final_df.to_csv(output_path, index=False, encoding='utf-8-sig')
+
+print(f"클렌징 완료! 결과 파일 경로: {output_path}")
+
+engine.dispose()
+con.close()
