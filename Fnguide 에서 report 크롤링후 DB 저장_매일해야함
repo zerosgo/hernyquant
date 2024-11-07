@@ -1,0 +1,103 @@
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from datetime import datetime
+import time
+import pymysql
+
+# Selenium WebDriver 설정
+options = webdriver.ChromeOptions()
+options.add_argument('--headless')  # 브라우저 창을 열지 않고 실행
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+
+# Chrome 드라이버 실행
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+# 크롤링할 웹 페이지 URL
+url = "https://comp.fnguide.com/SVO/WooriRenewal/Report.asp"
+
+# 페이지 열기
+driver.get(url)
+
+# 페이지가 로드될 시간을 기다림
+time.sleep(3)  # 페이지가 완전히 로드될 시간을 충분히 대기
+
+# 페이지 소스를 pandas로 읽어오기
+tables = pd.read_html(driver.page_source)
+
+# 디버깅 출력: 테이블 수 확인
+print(f"테이블 개수: {len(tables)}")
+
+# 표 데이터가 여러 개일 경우 첫 번째 표를 선택하거나, 원하는 표를 선택합니다.
+if len(tables) > 0:
+    df = tables[0]
+    print("표 데이터가 성공적으로 로드되었습니다.")
+else:
+    print("표 데이터를 찾을 수 없습니다.")
+    df = pd.DataFrame()
+
+# 데이터 가공
+if not df.empty and df.shape[1] >= 5:
+    # 열 이름 설정
+    df.columns = ['종목명 | 리포트요약', '투자의견', '목표주가', '전일종가', '제공처/작성자']
+
+    # 1. 종목명 추출: '(' 앞에 있는 단어를 종목명으로 추출하고 공백 제거
+    df['종목'] = df['종목명 | 리포트요약'].apply(lambda x: x.split('(')[0].strip())
+    
+    # 2. 종목코드 추출: 정규표현식을 이용해 (Axxxxx) 형식에서 숫자만 추출
+    df['종목코드'] = df['종목명 | 리포트요약'].str.extract(r'\(A(\d{6})\)')[0]
+
+    # 3. 목표주가와 전일종가를 int로 변환
+    df['목표주가'] = pd.to_numeric(df['목표주가'], errors='coerce')  # NaN 처리
+    df['전일종가'] = pd.to_numeric(df['전일종가'], errors='coerce')
+    
+    # 목표주가가 NaN인 행은 제거
+    df.dropna(subset=['목표주가'], inplace=True)
+
+    # int 형 변환
+    df['목표주가'] = df['목표주가'].astype(int)
+    df['전일종가'] = df['전일종가'].astype(int)
+
+    # 4. 증권사 및 Analyst 추출
+    df['증권사'] = df['제공처/작성자'].apply(lambda x: x.split()[0])
+    df['Analyst'] = df['제공처/작성자'].apply(lambda x: x.split()[1])
+
+    # 5. 필요한 열만 남기기
+    df = df[['종목', '종목코드', '증권사', 'Analyst', '목표주가', '전일종가']]
+    
+    # 6. 오늘 날짜를 첫 번째 열로 추가
+    today_date = datetime.today().strftime('%Y-%m-%d')
+    df.insert(0, 'Date', today_date)
+    
+    # 컬럼 이름 순서 확인
+    print(df)
+else:
+    print("데이터프레임이 비어 있거나 예상한 형식이 아닙니다.")
+
+# WebDriver 종료
+driver.quit()
+                         
+con = pymysql.connect(
+    user = 'root',
+    passwd = '7963',
+    host = '127.0.0.1',
+    db = 'stock_db',
+    charset = 'utf8'
+)
+
+mycursor = con.cursor()
+
+query = f"""
+    insert into kor_research_report_daily (Date, 종목, 종목코드, 증권사, Analyst, 목표주가, 전일종가)
+    values (%s,%s,%s,%s,%s,%s,%s) as new
+    on duplicate key update
+    증권사=new.증권사, Analyst=new.Analyst, 목표주가=new.목표주가, 전일종가=new.전일종가;
+"""
+
+args = df.values.tolist()
+mycursor.executemany(query, args)
+con.commit()
+
+con.close()
